@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>🚀 Extreme Website Analyzer</title>
+  <style>
+    :root {
+      --bg:#f2f4f8;--fg:#333;--card:#fff;--heading:#f7f9fb;
+      --btn:#007bff;--btn-hover:#0056b3;--error:#c00;
+      --debug-bg:#111;--debug-fg:#ccc;
+    }
+    .dark {
+      --bg:#1e1e1e;--fg:#0ff;--card:#2e2e2e;--heading:#333;
+      --btn:#0056b3;--btn-hover:#003a7a;--error:#f55;
+      --debug-bg:#222;--debug-fg:#eee;
+    }
+    *{box-sizing:border-box;}
+    body{margin:0;padding:0;font-family:sans-serif;
+      background:var(--bg);color:var(--fg);
+      transition:background .3s,color .3s;}
+    header{position:sticky;top:0;background:var(--card);
+      padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.1);z-index:100;}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;}
+    input[type="text"]{flex:1;min-width:200px;padding:8px;font-size:14px;
+      border:1px solid #ccc;border-radius:4px;
+      background:var(--card);color:var(--fg);}
+    button{padding:8px 12px;font-size:14px;border:none;border-radius:4px;
+      background:var(--btn);color:#fff;cursor:pointer;transition:background .2s;}
+    button:hover{background:var(--btn-hover);}
+    #debugBtn.active{background:#dc3545!important;}
+    #progress-container{position:relative;height:4px;background:#ddd;
+      margin:12px 0;border-radius:2px;overflow:hidden;}
+    #progress-bar{height:100%;width:0;background:var(--btn);
+      transition:width .3s ease;}
+    #progress-stage{position:absolute;top:-18px;left:0;font-size:12px;
+      color:var(--fg);}
+    #metaInfo,#history,#searchSection{padding:8px 16px;
+      background:var(--card);margin-bottom:8px;}
+    #results{padding:0 24px 24px;}
+    .section{margin-top:16px;border-radius:6px;
+      box-shadow:0 1px 4px rgba(0,0,0,.05);}
+    .section h2{margin:0;padding:12px 16px;font-size:18px;
+      background:var(--heading);cursor:pointer;}
+    .section[aria-expanded="false"] .section-content{display:none;}
+    .section-content{padding:16px;}
+    .badge{padding:2px 6px;border-radius:4px;font-size:12px;margin-left:8px;}
+    .badge.secure{background:#28a745;color:#fff;}
+    .badge.insecure{background:#dc3545;color:#fff;}
+    #previewContainer{display:none;margin:24px 0;background:var(--card);
+      border:1px solid #ccc;border-radius:6px;position:relative;}
+    #previewHeader{padding:8px 16px;background:var(--heading);
+      display:flex;gap:8px;align-items:center;}
+    #previewFrame{width:100%;height:600px;border:none;flex:1;}
+    #debugPanel{display:none;background:var(--debug-bg);
+      color:var(--debug-fg);padding:12px;margin:16px;border-radius:6px;
+      font-family:monospace;font-size:13px;max-height:200px;overflow:auto;}
+    .error-msg{color:var(--error);font-weight:bold;}
+    /* Fullscreen */
+    #previewContainer:fullscreen,
+    #previewContainer:-webkit-full-screen,
+    #previewContainer:-moz-full-screen,
+    #previewContainer:-ms-fullscreen{
+      display:flex;flex-direction:column;margin:0;width:100vw;height:100vh;border-radius:0;
+    }
+    #previewContainer:fullscreen #previewFrame,
+    #previewContainer:-webkit-full-screen #previewFrame,
+    #previewContainer:-moz-full-screen #previewFrame,
+    #previewContainer:-ms-fullscreen #previewFrame{
+      flex:1 1 auto;height:auto;
+    }
+    .small-badge{margin-left:auto;font-size:11px;padding:4px 8px;
+      background:#ffe08a;border-radius:4px;}
+  </style>
+</head>
+<body role="application">
+  <header>
+    <div class="controls">
+      <input id="urlInput" type="text" placeholder="https://site.org/wiki/Page_Name"/>
+      <button id="analyzeBtn">Analyze</button>
+      <button id="viewBtn">Preview Site</button>
+      <button id="toggleTheme">🌓</button>
+      <button id="debugBtn">🐞 Debug</button>
+      <button id="clearBtn">✖️</button>
+    </div>
+    <div id="progress-container">
+      <div id="progress-stage"></div>
+      <div id="progress-bar"></div>
+    </div>
+  </header>
+
+  <h1 style="text-align:center;margin:16px;">🚀 Extreme Website Analyzer</h1>
+  <div id="metaInfo" role="status" aria-live="polite"></div>
+  <div id="history" aria-label="Recent URLs"></div>
+  <div id="searchSection">
+    <input id="searchInput" placeholder="🔍 Search sections…"/>
+  </div>
+  <div id="results">🔎 Enter a URL and click “Analyze.”</div>
+  <div id="debugPanel"></div>
+
+  <div id="previewContainer">
+    <div id="previewHeader">
+      <strong>Site Preview:</strong>
+      <div class="small-badge" id="previewNotice">Using proxied preview</div>
+      <button id="fullscreenBtn">⛶ Fullscreen</button>
+      <button id="closePreview">Close Preview</button>
+    </div>
+    <iframe
+      id="previewFrame"
+      sandbox="allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-top-navigation"
+      allow="fullscreen"
+      allowfullscreen
+      srcdoc=""
+    ></iframe>
+  </div>
+
+  <script>
+  (function(){
+    'use strict';
+
+    let currentURL = '', debugEnabled = false;
+    const historyList = JSON.parse(localStorage.getItem('analyzerHistory')||'[]'),
+          urlInput    = document.getElementById('urlInput'),
+          analyzeBtn  = document.getElementById('analyzeBtn'),
+          viewBtn     = document.getElementById('viewBtn'),
+          toggleTheme = document.getElementById('toggleTheme'),
+          debugBtn    = document.getElementById('debugBtn'),
+          clearBtn    = document.getElementById('clearBtn'),
+          searchInput = document.getElementById('searchInput'),
+          resultsEl   = document.getElementById('results'),
+          historyEl   = document.getElementById('history'),
+          metaInfo    = document.getElementById('metaInfo'),
+          progressBar = document.getElementById('progress-bar'),
+          progressStage = document.getElementById('progress-stage'),
+          previewCont   = document.getElementById('previewContainer'),
+          frame         = document.getElementById('previewFrame'),
+          closePreview  = document.getElementById('closePreview'),
+          fullscreenBtn = document.getElementById('fullscreenBtn'),
+          debugPanel    = document.getElementById('debugPanel'),
+          previewNotice = document.getElementById('previewNotice');
+
+    function logDebug(msg){
+      if(!debugEnabled) return;
+      const d = document.createElement('div');
+      d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      debugPanel.appendChild(d);
+      console.debug('DEBUG:', msg);
+    }
+
+    debugBtn.onclick = ()=>{
+      debugEnabled = !debugEnabled;
+      debugBtn.classList.toggle('active', debugEnabled);
+      debugPanel.style.display = debugEnabled ? 'block' : 'none';
+      debugPanel.innerHTML = '';
+      logDebug('Debug ' + (debugEnabled?'enabled':'disabled'));
+    };
+    toggleTheme.onclick = ()=>{
+      document.body.classList.toggle('dark');
+      localStorage.theme = document.body.classList.contains('dark')?'dark':'light';
+      logDebug('Theme set to ' + localStorage.theme);
+    };
+    if(localStorage.theme==='dark') document.body.classList.add('dark');
+
+    const stages = {
+      init:'Initializing…',fetch:'Fetching…',
+      parse:'Parsing…',analyze:'Analyzing…',
+      render:'Rendering…',done:'Done'
+    };
+    function setProgress(p,s){
+      progressBar.style.width = p+'%';
+      progressStage.textContent = stages[s]||'';
+      logDebug(`Progress ${p}% (${s})`);
+    }
+    function debounce(fn,ms=200){
+      let t; return(...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); };
+    }
+
+    function renderHistory(){
+      historyEl.textContent='';
+      if(!historyList.length){
+        historyEl.textContent='Recent: –'; return;
+      }
+      historyEl.append('Recent: ');
+      historyList.forEach((u,i)=>{
+        const a=document.createElement('a');
+        a.href='#'; a.textContent=u;
+        a.onclick=e=>{ e.preventDefault(); urlInput.value=u; analyzeSite(); };
+        historyEl.appendChild(a);
+        if(i<historyList.length-1) historyEl.append(' · ');
+      });
+    }
+    renderHistory();
+
+    window.onresize = ()=>{
+      metaInfo.textContent = navigator.userAgent
+        + ' · Viewport:' + window.innerWidth + '×' + window.innerHeight;
+      logDebug('Viewport updated');
+    };
+    window.onresize();
+
+    // fetch page via MediaWiki parse API if wiki-like
+    async function fetchPage(url){
+      const m = url.match(/^(https?:\/\/[^\/]+)\/wiki\/(.*)$/);
+      if(m){
+        const page = m[2]||'Main_Page';
+        const apiUrl = m[1] + '/w/api.php'
+          + '?action=parse&redirects=true&format=json'
+          + '&prop=text&page='+encodeURIComponent(page)
+          + '&origin=*';
+        logDebug('Using API: ' + apiUrl);
+        const res = await fetch(apiUrl);
+        if(!res.ok) throw new Error('API fetch failed: ' + res.status);
+        const j = await res.json();
+        if(j.error) throw new Error('API error: ' + j.error.info);
+        return { html: j.parse.text['*'], title: j.parse.title };
+      }
+      return { html: await fetchRawPage(url), title:'(none)' };
+    }
+
+    // AllOrigins proxy fetch
+    async function fetchRawPage(url){
+      const proxy = 'https://api.allorigins.win/raw?url=';
+      const r = await fetch(proxy + encodeURIComponent(url));
+      if(!r.ok) throw new Error('Raw fetch failed: ' + r.status);
+      return await r.text();
+    }
+
+    // preview builder: srcdoc with universal rewriting + stub for dynamic calls
+    async function rebuildPreview(){
+      if(!currentURL) return;
+      logDebug('Rebuilding preview');
+      try {
+        let raw = await fetchRawPage(currentURL);
+        raw = raw
+          .replace(/<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]*>/gi,'')
+          .replace(/<meta[^>]+http-equiv=["']X-Frame-Options["'][^>]*>/gi,'');
+        const doc = new DOMParser().parseFromString(raw,'text/html');
+        const proxy = 'https://api.allorigins.win/raw?url=';
+
+        // rewrite every resource URL
+        doc.querySelectorAll('[src], [srcset], link[href]').forEach(el=>{
+          if(el.hasAttribute('src')){
+            const full = new URL(el.getAttribute('src'), currentURL).href;
+            el.setAttribute('src', proxy + encodeURIComponent(full));
+          }
+          if(el.hasAttribute('srcset')){
+            const rewritten = el.getAttribute('srcset')
+              .split(',')
+              .map(e=>{
+                let [u,desc] = e.trim().split(/\s+/);
+                const f = new URL(u, currentURL).href;
+                return proxy + encodeURIComponent(f) + (desc?' '+desc:'');
+              }).join(', ');
+            el.setAttribute('srcset', rewritten);
+          }
+          if(el.tagName.toLowerCase()==='link' && el.hasAttribute('href')){
+            const full = new URL(el.getAttribute('href'), currentURL).href;
+            el.setAttribute('href', proxy + encodeURIComponent(full));
+          }
+        });
+
+        // stub to rewrite fetch/XHR, stub storage, intercept navigation
+        const stub = document.createElement('script');
+        stub.textContent = `
+          (function(){
+            const proxy='https://api.allorigins.win/raw?url=';
+            const realFetch=window.fetch;
+            window.fetch=function(input,init){
+              let url= typeof input==='string'? input : input.url;
+              if(url.includes('battlecats.miraheze.org/') || url.includes('/w/api.php')){
+                url = proxy + encodeURIComponent(url);
+              }
+              input = typeof input==='string'? url : new Request(url,input);
+              return realFetch(input,init);
+            };
+            const origOpen=XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open=function(method,url){
+              if(typeof url==='string' && (url.includes('battlecats.miraheze.org/')||url.includes('/w/api.php'))){
+                url = proxy + encodeURIComponent(
+                  url.startsWith('/')? location.origin+url : url
+                );
+              }
+              return origOpen.apply(this,[method,url].concat(Array.prototype.slice.call(arguments,2)));
+            };
+            var _s={};
+            Object.defineProperty(window,'localStorage',{value:{
+              getItem:k=>_s[k]||null,
+              setItem:(k,v)=>_s[k]=String(v),
+              removeItem:k=>delete _s[k],
+              clear:()=>_s={}
+            }});
+            Object.defineProperty(document,'cookie',{get:()=>'',set:()=>{}});
+            document.addEventListener('click',function(e){
+              var a=e.target.closest('a');
+              if(a&&a.href){
+                e.preventDefault();
+                window.parent.postMessage({type:'navigate',url:a.href},'*');
+              }
+            },true);
+          })();
+        `;
+        doc.head.insertBefore(stub, doc.head.firstChild);
+
+        // base to resolve relative
+        const base = document.createElement('base');
+        base.href = currentURL;
+        base.target = '_self';
+        doc.head.insertBefore(base, stub.nextSibling);
+
+        frame.srcdoc = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+      } catch(e){
+        console.error(e);
+        logDebug('Preview rebuild failed: '+e);
+        resultsEl.innerHTML = `<p class="error-msg">Preview failed: ${e.message}</p>`;
+      }
+    }
+
+    window.addEventListener('message', e=>{
+      if(e.data?.type==='navigate'){
+        currentURL = e.data.url;
+        urlInput.value = currentURL;
+        rebuildPreview();
+      }
+    });
+
+    function isFS(){
+      return document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.mozFullScreenElement ||
+        document.msFullscreenElement;
+    }
+    fullscreenBtn.onclick = ()=>{
+      if(!isFS()){
+        (previewCont.requestFullscreen ||
+         previewCont.webkitRequestFullscreen ||
+         previewCont.mozRequestFullScreen ||
+         previewCont.msRequestFullscreen
+        ).call(previewCont).catch(()=>{});
+      } else {
+        (document.exitFullscreen ||
+         document.webkitExitFullscreen ||
+         document.mozCancelFullScreen ||
+         document.msExitFullscreen
+        ).call(document).catch(()=>{});
+      }
+    };
+    ['fullscreenchange','webkitfullscreenchange','mozfullscreenchange','MSFullscreenChange']
+      .forEach(evt=>document.addEventListener(evt,()=>{
+        fullscreenBtn.textContent = isFS() ? '✖ Exit Fullscreen' : '⛶ Fullscreen';
+      }));
+
+    async function analyzeSite(){
+      clearResults(); setProgress(0,'init');
+      let url = urlInput.value.trim();
+      if(!/^https?:\/\//i.test(url)) url = 'http://' + url;
+      currentURL = url;
+
+      try {
+        setProgress(15,'fetch');
+        const { html, title } = await fetchPage(currentURL);
+
+        setProgress(30,'parse');
+        const stripped = html
+          .replace(/<script[\s\S]*?<\/script>/gi,'')
+          .replace(/<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]*>/gi,'');
+        const doc = new DOMParser().parseFromString(
+          `<base href="${currentURL}">` + stripped, 'text/html'
+        );
+
+        const p0 = doc.querySelector('p');
+        const description = p0
+          ? p0.innerText.replace(/\s+/g,' ').trim()
+          : '(none)';
+
+        const text = doc.body.innerText || '';
+        const wordCount = text.split(/\s+/).filter(Boolean).length;
+        let domDepth = 0;
+        (function walk(n,d){
+          domDepth = Math.max(domDepth,d);
+          Array.from(n.children).forEach(c=>walk(c,d+1));
+        })(doc.body,1);
+
+        const stop = new Set([
+          "the","and","for","that","with","you","this","have","are",
+          "not","but","your","from","they","will","was"
+        ]);
+        const freq = {};
+        text.toLowerCase().split(/\W+/)
+          .filter(w=>w && !stop.has(w))
+          .forEach(w=>freq[w]=(freq[w]||0)+1);
+        const topWords = Object.entries(freq)
+          .sort(([,a],[,b])=>b-a).slice(0,10)
+          .map(([w,c])=>`${w} (${c})`);
+
+        setProgress(70,'render');
+        const secure = currentURL.startsWith('https://');
+        const badge = `<span class="badge ${secure?'secure':'insecure'}">`
+          + (secure?'Secure':'Insecure') + `</span>`;
+        const cspList = [...html.matchAll(
+          /<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]*content=["']([^"']+)["'][^>]*>/gi
+        )].map(m=>m[1]);
+
+        resultsEl.innerHTML = `
+          <div class="section" aria-expanded="true">
+            <h2>🔍 Summary</h2>
+            <div class="section-content">
+              <p><strong>URL:</strong> <a href="${currentURL}" target="_blank">${currentURL}</a> ${badge}</p>
+              <p><strong>Title:</strong> ${title}</p>
+              <p><strong>Description:</strong> ${description}</p>
+              <p><strong>Proxy:</strong> (MediaWiki API / AllOrigins)</p>
+            </div>
+          </div>
+          <div class="section" aria-expanded="false">
+            <h2>🛡️ Security</h2>
+            <div class="section-content">
+              <p><strong>CSP:</strong></p>
+              <ul>${cspList.length
+                ? cspList.map(s=>`<li>${s}</li>`).join('')
+                : '<li>(none)</li>'}</ul>
+            </div>
+          </div>
+          <div class="section" aria-expanded="true">
+            <h2>📊 Metrics</h2>
+            <div class="section-content">
+              <p><strong>Word Count:</strong> ${wordCount}</p>
+              <p><strong>DOM Depth:</strong> ${domDepth}</p>
+              <p><strong>Top Words:</strong> ${topWords.join(', ')}</p>
+            </div>
+          </div>`;
+        document.querySelectorAll('#results .section h2').forEach(h2=>{
+          h2.onclick=()=>{
+            const sec=h2.parentElement;
+            sec.setAttribute('aria-expanded',
+              sec.getAttribute('aria-expanded')==='true'?'false':'true');
+          };
+        });
+
+        if(!historyList.includes(currentURL)) historyList.unshift(currentURL);
+        if(historyList.length>5) historyList.pop();
+        localStorage.setItem('analyzerHistory',JSON.stringify(historyList));
+        renderHistory();
+      } catch(err){
+        console.error(err);
+        resultsEl.innerHTML = `<p class="error-msg">⚠️ ${err.message}</p>`;
+      } finally {
+        setProgress(100,'done');
+        logDebug('Analysis complete');
+      }
+    }
+
+    analyzeBtn.onclick = debounce(analyzeSite,200);
+    viewBtn.onclick = async ()=>{
+      if(previewCont.style.display==='block'){
+        clearResults(); return;
+      }
+      await rebuildPreview();
+      previewCont.style.display='block';
+      viewBtn.textContent='Hide Preview';
+    };
+    closePreview.onclick = clearResults;
+    clearBtn.onclick = clearResults;
+    searchInput.oninput = debounce(function(){
+      const term = this.value.trim().toLowerCase();
+      document.querySelectorAll('#results .section').forEach(sec=>{
+        sec.style.display = term && !sec.innerText.toLowerCase().includes(term)
+          ? 'none' : '';
+      });
+    },200);
+
+    function clearResults(){
+      resultsEl.innerHTML='🔎 Enter a URL and click “Analyze.”';
+      setProgress(0,'init');
+      if(previewCont.style.display==='block'){
+        previewCont.style.display='none';
+        frame.srcdoc='';
+        viewBtn.textContent='Preview Site';
+      }
+    }
+
+    // expose analyzeSite globally for convenience
+    window.analyzeSite = analyzeSite;
+  })();
+  </script>
+</body>
+</html>
